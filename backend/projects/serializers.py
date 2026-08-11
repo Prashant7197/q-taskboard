@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from users.serializers import UserSerializer
-from .models import Project, Membership, Task
+from .models import Comment, Project, Membership, Task
 
 
 class TaskSerializer(serializers.ModelSerializer):
@@ -24,6 +24,20 @@ class TaskSerializer(serializers.ModelSerializer):
             'id', 'project_id', 'title', 'description', 'status',
             'assignee_id', 'created_by_id', 'position', 'created_at', 'updated_at', 'assignee',
         ]
+
+
+class CommentSerializer(serializers.ModelSerializer):
+    author = UserSerializer(read_only=True)
+
+    class Meta:
+        model = Comment
+        fields = ['id', 'body', 'author', 'created_at']
+        read_only_fields = ['id', 'author', 'created_at']
+
+    def validate_body(self, value):
+        if not value.strip():
+            raise serializers.ValidationError('body cannot be blank')
+        return value
 
 
 class MembershipSerializer(serializers.ModelSerializer):

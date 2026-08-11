@@ -1,10 +1,15 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from django.db import connection
+from django.db.models import Q
 from users.serializers import UserSerializer
 from .models import Project, Membership, Task
-from .serializers import ProjectDetailSerializer, TaskSerializer
+from .serializers import CommentSerializer, ProjectDetailSerializer, TaskSerializer
+from .airtable_export import (
+    AirtableConfigurationError,
+    AirtableExportError,
+    export_project_tasks,
+)
 
 
 def _get_membership(user, project_id):
@@ -109,18 +114,14 @@ class TaskListCreateView(APIView):
 
         q = request.query_params.get('q')
         if q:
-            with connection.cursor() as cursor:
-                sql = (
-                    f"SELECT id, project_id, title, description, status, assignee_id, created_by_id, position, created_at, updated_at "
-                    f"FROM tasks "
-                    f"WHERE project_id = '{project_id}' "
-                    f"AND (title ILIKE '%{q}%' OR description ILIKE '%{q}%') "
-                    f"ORDER BY position ASC"
-                )
-                cursor.execute(sql)
-                columns = [col[0] for col in cursor.description]
-                rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
-            return Response({'tasks': rows})
+            tasks = (
+                Task.objects
+                .filter(project_id=project_id)
+                .filter(Q(title__icontains=q) | Q(description__icontains=q))
+                .select_related('assignee')
+                .order_by('position')
+            )
+            return Response({'tasks': TaskSerializer(tasks, many=True).data})
 
         tasks = (
             Task.objects
@@ -200,6 +201,46 @@ class TaskDetailView(APIView):
         return Response({'ok': True})
 
 
+class TaskCommentListCreateView(APIView):
+    def _task_and_membership(self, request, task_id):
+        try:
+            task = Task.objects.select_related('project').get(id=task_id)
+        except Task.DoesNotExist:
+            return None, None
+        return task, _get_membership(request.user, task.project_id)
+
+    def get(self, request, task_id):
+        task, membership = self._task_and_membership(request, task_id)
+        if task is None:
+            return Response({'error': 'not found'}, status=status.HTTP_404_NOT_FOUND)
+        if not membership:
+            return Response({'error': 'forbidden'}, status=status.HTTP_403_FORBIDDEN)
+
+        comments = task.comments.select_related('author').all()
+        return Response({'comments': CommentSerializer(comments, many=True).data})
+
+    def post(self, request, task_id):
+        task, membership = self._task_and_membership(request, task_id)
+        if task is None:
+            return Response({'error': 'not found'}, status=status.HTTP_404_NOT_FOUND)
+        if not membership:
+            return Response({'error': 'forbidden'}, status=status.HTTP_403_FORBIDDEN)
+        if not _can_edit_tasks(membership.role):
+            return Response({'error': 'viewers cannot create comments'}, status=status.HTTP_403_FORBIDDEN)
+
+        serializer = CommentSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(
+                {'error': 'invalid input', 'details': serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        comment = serializer.save(task=task, author=request.user)
+        return Response(
+            {'comment': CommentSerializer(comment).data},
+            status=status.HTTP_201_CREATED,
+        )
+
+
 class MemberAddView(APIView):
     def post(self, request, project_id):
         membership = _get_membership(request.user, project_id)
@@ -240,4 +281,10 @@ class ExportView(APIView):
             return Response({'error': 'only admins and members can export'}, status=status.HTTP_403_FORBIDDEN)
 
         tasks = Task.objects.filter(project_id=project_id).select_related('assignee', 'created_by')
-        return Response({'exported': 0, 'tasks': TaskSerializer(tasks, many=True).data})
+        try:
+            summary = export_project_tasks(tasks)
+        except AirtableConfigurationError as error:
+            return Response({'error': str(error)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        except AirtableExportError as error:
+            return Response({'error': str(error)}, status=status.HTTP_502_BAD_GATEWAY)
+        return Response(summary)

@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiFetch, getToken } from "@/lib/api-client";
+import { apiFetch, getStoredUser, getToken } from "@/lib/api-client";
 import { Header } from "@/components/Header";
 import { StatusColumn } from "@/components/StatusColumn";
 import { TaskDetail } from "@/components/TaskDetail";
+import { AirtableExport } from "@/components/AirtableExport";
 import type { ApiProjectDetail, ApiTask, TaskStatus } from "@/types";
 import { STATUS_ORDER } from "@/types";
 
@@ -41,6 +42,10 @@ export default function ProjectPage() {
   });
 
   const project = data?.project;
+  const currentUser = getStoredUser();
+  const currentMembership = project?.memberships.find(
+    (membership) => membership.user.id === currentUser?.id,
+  );
   const tasksByStatus: Record<TaskStatus, ApiTask[]> = {
     todo: [],
     in_progress: [],
@@ -86,6 +91,13 @@ export default function ProjectPage() {
                   owner: {project.owner.name} · {project.memberships.length} members
                 </p>
               </div>
+              <AirtableExport
+                projectId={id!}
+                canExport={
+                  currentMembership?.role === "admin" ||
+                  currentMembership?.role === "member"
+                }
+              />
             </div>
 
             <section className="bg-surface border border-border rounded-lg p-4 mb-6">
@@ -168,6 +180,9 @@ export default function ProjectPage() {
           task={activeTask}
           projectId={id!}
           members={project.memberships}
+          canComment={
+            currentMembership?.role === "admin" || currentMembership?.role === "member"
+          }
           onClose={() => setActiveTask(null)}
         />
       )}
