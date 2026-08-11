@@ -57,3 +57,7 @@ Task creation and update assign the caller-provided UUID directly to `assignee_i
 The member endpoint permits an admin to change any existing membership, including their own, to `member` or `viewer` without ensuring another admin remains. Demoting the sole admin leaves the project without anyone able to manage membership, update it, or delete it.
 
 **Recommended fix:** Reject role changes that would leave a project with no admin and preserve an explicit invariant between project ownership and administrative membership.
+
+
+## 4. Record of the Screen
+Link:- https://drive.google.com/file/d/1TOL-L4i3v-niuIJHY_ym71-Zupre646k/view?usp=sharing
